@@ -211,9 +211,9 @@ class SMSNotifier
         }
 
         $fields[] = array(
-            'title' => __(' Shortcodes', $this->prefix),
+            'title' => __(' Placeholders', $this->prefix),
             'type' => 'title',
-            'desc' => 'use these shortcodes in msges body content above. <br><br>' . $shortcode_desc,
+            'desc' => 'use these placeholders in msges body content above. <br><br>' . $shortcode_desc,
             'id' => $this->prefix . 'notifylk_settings'
         );
 
