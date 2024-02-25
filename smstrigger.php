@@ -7,9 +7,13 @@ class SMSTrigger
      */
 
     private $prefix = 'sms_notifier_woo_';
-    private $password, $userId, $sendId, $adminRecipients;
+    private $sms_password;
+    private $userId;
+    private $sendId;
+    private $adminRecipients;
     private $yesAdminMsg;
-    private $contentDefault, $contentAdmin;
+    private $contentDefault;
+    private $contentAdmin;
 
     /*
      * Initialize values.
@@ -20,7 +24,7 @@ class SMSTrigger
         /*
          * Get SMS configuration settings dynamically from fields.
          */
-        $this->password = get_option($this->prefix . 'password');
+        $this->sms_password = get_option($this->prefix . 'sms_password');
         $this->userId = get_option($this->prefix . 'user_id');
         $this->sendId = get_option($this->prefix . 'from_id');
         $this->adminRecipients = get_option($this->prefix . 'admin_sms_recipients');
@@ -30,6 +34,8 @@ class SMSTrigger
 
         add_action('woocommerce_order_status_changed', array($this, 'send_sms_for_events'), 11, 3);
         add_action('woocommerce_new_customer_note', array($this, 'send_order_note_sms'));
+        add_action('woocommerce_new_order', array($this, 'send_admin_sms_for_woo_new_order'), 10, 1);
+
     }
 
     public function send_sms_for_events($order_id, $from_status, $to_status)
@@ -41,10 +47,16 @@ class SMSTrigger
 
     public function send_admin_sms_for_woo_new_order($order_id)
     {
-        if ($this->yesAdminMsg)
-            $this->send_sms($order_id, 'admin-order');
+        error_log('send_admin_sms_for_woo_new_order method called.');
+        if ($this->yesAdminMsg) {
+            error_log('Sending admin SMS initiated for new order ID: ' . $order_id);
+            $this->send_sms($order_id, 'admin-order', ''); // Provide an empty string as the third argument
+        } else {
+            error_log('Admin SMS sending is disabled. Skipping.');
+        }
     }
-
+    
+    
     public function send_order_note_sms($data)
     {
         if (get_option($this->prefix . 'enable_notes_sms') !== "yes")
@@ -72,7 +84,7 @@ class SMSTrigger
 
         $tracking_id = $order->get_meta('citypak_tracking_code', true);
 
-        $tracking_id_string = implode(', ', $tracking_id);
+        $tracking_id_string = is_array($tracking_id) ? implode(', ', $tracking_id) : '';
 
         $replacements_string = array(
             '{{shop_name}}' => get_bloginfo('name'),
@@ -89,8 +101,6 @@ class SMSTrigger
 
         return str_replace(array_keys($replacements_string), $replacements_string, $message);
     }
-
-
 
     public static function reformatPhoneNumbers($value)
     {
@@ -119,8 +129,9 @@ class SMSTrigger
             $message = $message_prefix .  $message_text;
         } else {
             $message = get_option($this->prefix . $status . '_sms_template');
-            if (empty($message))
+            if (empty($message)) {
                 $message = $this->contentDefault;
+            }
         }
 
         error_log('Constructed message: ' . $message);
@@ -135,32 +146,57 @@ class SMSTrigger
 
         $to_numbers = explode(',', $pn);
         foreach ($to_numbers as $numb) {
-            if (empty($numb))
+            if (empty($numb)) {
                 continue;
+            }
 
             $phone = $this->reformatPhoneNumbers($numb);
 
             error_log('Reformatted phone number: ' . $phone);
 
-            $api_data = array(
-                'message' => $message,
-                'to' => $phone,
-                'from' => $this->sendId,
-                'username' => $this->userId,
-                'password' => $this->password,
-                'messageType' => (int) get_option($this->prefix . 'message_type')
-            );
+            include 'ESMSWS.php';
 
-            error_log('API Data: ' . print_r($api_data, true));
+            $username = $this->userId;
+            $sms_password = $this->sms_password;
+            $alias = $this->sendId;
+            $messageToSend = $message;
+            $recipients = array($phone);
 
-            $ch = curl_init('');
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($api_data));
-            curl_setopt($ch, CURLOPT_HTTPHEADER, array('Content-Type: application/json'));
-            $response = curl_exec($ch);
-            curl_close($ch);
+            //$username = '';
+           // $password = 'de!5%84d7}L$';
+            // $alias = 'TEST';
+            // $messageToSend = 'Test message';
+            // $recipients = array('94764154096');
 
-            error_log('API Response: ' . $response);
+            error_log('Username: ' . $username);
+            error_log('Password: ' . $sms_password);
+            error_log('Alias: ' . $alias);
+            error_log('Message: ' . $messageToSend);
+            error_log('Recipients: ' . implode(',', $recipients));
+
+            // Create or check session before sending the message
+            $session = createSession('', $username, $sms_password, '');
+            if ($session) {
+                if (isSession($session)) {
+                    $response = sendMessages($session, $alias, $messageToSend, $recipients, 0);
+                    if ($response === 151) {
+                        $session = renewSession($session);
+                        if ($session) {
+                            $response = sendMessages($session, $alias, $messageToSend, $recipients, 0);
+                            error_log('API Response after session renewal: ' . $response); // Log response after renewal
+                        } else {
+                            error_log("Failed to renew session.");
+                        }
+                    } else {
+                        // Output the response for other cases.
+                        error_log("API response: " . $response); // Log response for other cases
+                    }
+                } else {
+                    error_log("Session is invalid."); // Log invalid session
+                }
+            } else {
+                error_log("Failed to create session."); // Log session creation failure
+            }
         }
     }
 }
